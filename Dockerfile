@@ -11,6 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ .
+COPY data/ ./data
 
 # Python unbuffered is recommended for logging in containers
 ENV PYTHONUNBUFFERED=1

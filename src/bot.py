@@ -1,6 +1,8 @@
 # src/bot.py
 import asyncio
 import os
+import pathlib
+import random
 import requests
 import logging
 from telegram import Update
@@ -10,15 +12,22 @@ from api_client import MessageAPIClient
 
 # Configure logging
 MY_BOT_NAME='fakeclaude'
+log_level = os.getenv('LOG_LEVEL', 'INFO')
+numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=numeric_level
 )
 logger = logging.getLogger(MY_BOT_NAME)
 
 # API configuration from environment
 API_ENDPOINT = os.getenv('API_ENDPOINT', 'http://localhost')
 api = MessageAPIClient(MY_BOT_NAME, API_ENDPOINT)
+
+DATA_DIR = os.path.join(pathlib.Path(__file__).parent.resolve(), 'data')
+logger.info(__file__)
+logger.info(pathlib.Path(__file__).parent.resolve())
+logger.info(f'Setting {DATA_DIR=}')
 
 async def health_check():
     """Check bot's health and API connection."""
@@ -54,6 +63,67 @@ async def handle_health(request):
     status = 200 if health['status'] == 'healthy' else 500
     return web.json_response(health, status=status)
 
+
+def get_random_file(directory):
+    try:
+        files = [f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))]
+        if not files:
+            logger.error(f'Could not find any files in {directory=}')
+            return ''
+    except Exception as e:
+        error = f'Failed to populate list of files in {directory} - {e.args[0]}'
+        logger.error(error)
+        return ''
+    
+    try:
+        random_file = random.choice(files)
+        random_file_fullpath = os.path.normpath(os.path.join(directory, random_file))
+        if not os.path.isfile(random_file_fullpath):
+            logger.error(f'Failed to choose random file from directory - {random_file_fullpath} does not exist')
+            return ''
+        return random_file_fullpath
+    except Exception as e:
+        error = f'Failed to get path to random file \'{random_file}\' in \'{directory}\' - {e.args[0]}'
+        logger.error(error)
+        return ''
+
+
+def read_file_content(file):
+    if not file:
+        logger.error(f'File path argument cannot be empty: {file=}')
+        return '', file
+    if os.path.getsize(file) == 0:
+        logger.error(f'File is empty \'{file}\'')
+        return '', file
+
+    try:
+        with open(file, 'r') as f:
+            content = f.read()
+        return content, file
+    except FileNotFoundError as e:
+        logger.error(f'File not found - {e.args[0]}')
+        return '', file
+    except IOError as e:
+        logger.error(f'Failed to read \'{file}\' - {e.args[0]}')
+        return '', file
+
+
+def get_default_response(source_dir):
+    source_file = os.path.join(source_dir, 'default.txt')
+    return read_file_content(source_file), source_file
+
+
+def gen_claude_prompt(source_dir):
+    try:
+        response, source_file = read_file_content(get_random_file(source_dir))
+        if not response:
+            response, source_file = get_default_response(source_dir)
+        return response, source_file
+    except Exception as e:
+        error = f'Failed to get valid response from {source_dir=} - {e.args[0]}'
+        logger.error(error)
+        raise Exception(error)
+
 # Define command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
@@ -64,22 +134,17 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     health = await health_check()
     await update.message.reply_text('pong! connection to server is {}'.format(health['status']))
 
-async def fetch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show last messages in server when the command /fetch is issued."""
-    messages = api.get_messages({'limit': 2})
-    if not messages:
-        await update.message.reply_text(f'No messages found from me ({MY_BOT_NAME})')
-        return
+async def reply_with_random_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    source_dir = os.path.join(DATA_DIR, 'claude_prompts')
+    if not os.path.isdir(source_dir):
+        logger.error(f'Missing directory {source_dir}')
+    
+    response, source_file = gen_claude_prompt(source_dir)
+    if not response:
+        logger.error(f'Failed to generate response from {source_file=}')
+        await update.message.reply_text('You have run out of free messages until 8am tomorrow')
 
-    print_me = []
-    for i,m in enumerate(messages):
-        if (type(m) is dict) and ('text' in m.keys()):
-            print_me.append(m['text'])
-        else:
-            logger.error(f'Skipping message[{i}] due to invalid format: {str(m)}')
-
-    lines = [f'Message #{i}:\n{m}' for i,m in enumerate(print_me)]
-    await update.message.reply_text('\n\n'.join(lines))
+    await update.message.reply_text(response)
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /help is issued."""
@@ -90,6 +155,7 @@ Available commands:
 
 /ping - Check if bot is connected to server
 /fetch - Show last messages in server
+/ask_claude - Returns a claude response
     """
     await update.message.reply_text(help_text)
 
@@ -108,7 +174,7 @@ def main():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help))
     application.add_handler(CommandHandler('ping', ping))
-    application.add_handler(CommandHandler('fetch', fetch))
+    application.add_handler(CommandHandler('ask_claude', reply_with_random_file))
 
     # Start health check server
     app = web.Application()
