@@ -135,16 +135,19 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text('pong! connection to server is {}'.format(health['status']))
 
 async def reply_with_random_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message or update.channel_post
+
     source_dir = os.path.join(DATA_DIR, 'claude_prompts')
     if not os.path.isdir(source_dir):
         logger.error(f'Missing directory {source_dir}')
+        return
     
     response, source_file = gen_claude_prompt(source_dir)
     if not response:
-        logger.error(f'Failed to generate response from {source_file=}')
-        await update.message.reply_text('You have run out of free messages until 8am tomorrow')
+        response = 'You have run out of free messages until 8am tomorrow'  # Default response
+        logger.warning(f'Failed to generate response from {source_file=}. Replying with default response: {response}')
 
-    await context.bot.send_message(chat_id=update.effective_chat.id,
+    await context.bot.send_message(chat_id=message.chat_id,
                                    text=response,
                                    reply_markup=ForceReply())
 
