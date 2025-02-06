@@ -5,7 +5,7 @@ import pathlib
 import random
 import requests
 import logging
-from telegram import Update
+from telegram import Update, ForceReply
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from api_client import MessageAPIClient
@@ -144,7 +144,9 @@ async def reply_with_random_file(update: Update, context: ContextTypes.DEFAULT_T
         logger.error(f'Failed to generate response from {source_file=}')
         await update.message.reply_text('You have run out of free messages until 8am tomorrow')
 
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=response)
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text=response,
+                                   reply_markup=ForceReply())
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /help is issued."""
